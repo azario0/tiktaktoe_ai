@@ -40,6 +40,7 @@ class TicTacToe:
         self.current_player = 'X'
         self.winner = None
         self.game_over = False
+        self.play_against_computer = None
 
     def computer_move(self):
         empty_positions = [i for i, spot in enumerate(self.board) if spot == ' ']
@@ -68,11 +69,15 @@ def draw_board(frame, game):
     cv2.putText(frame, f"X: {game.scores['X']} O: {game.scores['O']} Tie: {game.scores['Tie']}", (10, h - 10),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
 
-def draw_selection_menu(frame):
+def draw_selection_menu(frame, selected_option=None):
     h, w, _ = frame.shape
     cv2.putText(frame, "Select game mode:", (w // 4, h // 3), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
-    cv2.putText(frame, "Play against computer", (w // 4, h // 2), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-    cv2.putText(frame, "Play against human", (w // 4, 2 * h // 3), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+    
+    computer_color = (0, 255, 0) if selected_option == True else (255, 255, 255)
+    human_color = (0, 255, 0) if selected_option == False else (255, 255, 255)
+    
+    cv2.putText(frame, "Play against computer", (w // 4, h // 2), cv2.FONT_HERSHEY_SIMPLEX, 1, computer_color, 2)
+    cv2.putText(frame, "Play against human", (w // 4, 2 * h // 3), cv2.FONT_HERSHEY_SIMPLEX, 1, human_color, 2)
 
 def get_selection(frame, index_finger_tip):
     h, w, _ = frame.shape
@@ -86,47 +91,14 @@ def get_selection(frame, index_finger_tip):
 
 def main():
     mp_hands = mp.solutions.hands
-    hands = mp_hands.Hands(static_image_mode=False, max_num_hands=1, min_detection_confidence=0.5)
+    hands = mp_hands.Hands(static_image_mode=False, max_num_hands=1, min_detection_confidence=0.7)
 
     cap = cv2.VideoCapture(0)
     game = TicTacToe()
 
     selection_start_time = None
     selection_duration = 2  # Hold for 2 seconds to make a selection
-
-    while game.play_against_computer is None:
-        ret, frame = cap.read()
-        if not ret:
-            break
-
-        frame = cv2.flip(frame, 1)
-        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        results = hands.process(rgb_frame)
-
-        draw_selection_menu(frame)
-
-        if results.multi_hand_landmarks:
-            hand_landmarks = results.multi_hand_landmarks[0]
-            index_finger_tip = hand_landmarks.landmark[mp_hands.HandLandmark.INDEX_FINGER_TIP]
-            
-            selection = get_selection(frame, index_finger_tip)
-            if selection is not None:
-                if selection_start_time is None:
-                    selection_start_time = time.time()
-                elif time.time() - selection_start_time >= selection_duration:
-                    game.play_against_computer = selection
-            else:
-                selection_start_time = None
-
-            # Draw a circle at the index finger tip
-            h, w, _ = frame.shape
-            cx, cy = int(index_finger_tip.x * w), int(index_finger_tip.y * h)
-            cv2.circle(frame, (cx, cy), 10, (0, 0, 255), -1)
-
-        cv2.imshow("TicTacToe", frame)
-
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            return
+    current_selection = None
 
     while True:
         ret, frame = cap.read()
@@ -137,34 +109,64 @@ def main():
         rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         results = hands.process(rgb_frame)
 
-        draw_board(frame, game)
+        h, w, _ = frame.shape
 
-        if results.multi_hand_landmarks:
-            for hand_landmarks in results.multi_hand_landmarks:
-                # Check if hand is closed (thumb tip close to index finger tip)
-                thumb_tip = hand_landmarks.landmark[mp_hands.HandLandmark.THUMB_TIP]
-                index_tip = hand_landmarks.landmark[mp_hands.HandLandmark.INDEX_FINGER_TIP]
-                distance = np.sqrt((thumb_tip.x - index_tip.x)**2 + (thumb_tip.y - index_tip.y)**2)
+        if game.play_against_computer is None:
+            draw_selection_menu(frame, current_selection)
 
-                if distance < 0.1:  # Adjust this threshold as needed
-                    h, w, _ = frame.shape
-                    x, y = int(index_tip.x * w), int(index_tip.y * h)
-                    cell_height, cell_width = h // 3, w // 3
-                    row, col = y // cell_height, x // cell_width
-                    position = row * 3 + col
+            if results.multi_hand_landmarks:
+                hand_landmarks = results.multi_hand_landmarks[0]
+                index_finger_tip = hand_landmarks.landmark[mp_hands.HandLandmark.INDEX_FINGER_TIP]
+                
+                selection = get_selection(frame, index_finger_tip)
+                if selection is not None:
+                    if selection != current_selection:
+                        current_selection = selection
+                        selection_start_time = time.time()
+                    elif time.time() - selection_start_time >= selection_duration:
+                        game.play_against_computer = selection
+                else:
+                    current_selection = None
+                    selection_start_time = None
 
-                    if not game.game_over and game.board[position] == ' ':
-                        game.make_move(position)
-                        if game.play_against_computer and not game.game_over:
-                            computer_position = game.computer_move()
-                            game.make_move(computer_position)
+                # Draw a circle at the index finger tip
+                cx, cy = int(index_finger_tip.x * w), int(index_finger_tip.y * h)
+                cv2.circle(frame, (cx, cy), 10, (0, 0, 255), -1)
 
-        if game.game_over:
-            if game.winner:
-                cv2.putText(frame, f"Player {game.winner} wins!", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-            else:
-                cv2.putText(frame, "It's a tie!", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-            cv2.putText(frame, "Press 'r' to restart or 'q' to quit", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+            # Display a progress bar for selection
+            if current_selection is not None and selection_start_time is not None:
+                progress = min((time.time() - selection_start_time) / selection_duration, 1.0)
+                bar_width = int(w * progress)
+                cv2.rectangle(frame, (0, h - 10), (bar_width, h), (0, 255, 0), -1)
+
+        else:
+            draw_board(frame, game)
+
+            if results.multi_hand_landmarks:
+                for hand_landmarks in results.multi_hand_landmarks:
+                    # Check if hand is closed (thumb tip close to index finger tip)
+                    thumb_tip = hand_landmarks.landmark[mp_hands.HandLandmark.THUMB_TIP]
+                    index_tip = hand_landmarks.landmark[mp_hands.HandLandmark.INDEX_FINGER_TIP]
+                    distance = np.sqrt((thumb_tip.x - index_tip.x)**2 + (thumb_tip.y - index_tip.y)**2)
+
+                    if distance < 0.1:  # Adjust this threshold as needed
+                        x, y = int(index_tip.x * w), int(index_tip.y * h)
+                        cell_height, cell_width = h // 3, w // 3
+                        row, col = y // cell_height, x // cell_width
+                        position = row * 3 + col
+
+                        if not game.game_over and game.board[position] == ' ':
+                            game.make_move(position)
+                            if game.play_against_computer and not game.game_over:
+                                computer_position = game.computer_move()
+                                game.make_move(computer_position)
+
+            if game.game_over:
+                if game.winner:
+                    cv2.putText(frame, f"Player {game.winner} wins!", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+                else:
+                    cv2.putText(frame, "It's a tie!", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+                cv2.putText(frame, "Press 'r' to restart or 'q' to quit", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
 
         cv2.imshow("TicTacToe", frame)
 
@@ -173,41 +175,8 @@ def main():
             break
         elif key == ord('r'):
             game.reset_game()
-            game.play_against_computer = None
             selection_start_time = None
-            while game.play_against_computer is None:
-                ret, frame = cap.read()
-                if not ret:
-                    break
-
-                frame = cv2.flip(frame, 1)
-                rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                results = hands.process(rgb_frame)
-
-                draw_selection_menu(frame)
-
-                if results.multi_hand_landmarks:
-                    hand_landmarks = results.multi_hand_landmarks[0]
-                    index_finger_tip = hand_landmarks.landmark[mp_hands.HandLandmark.INDEX_FINGER_TIP]
-                    
-                    selection = get_selection(frame, index_finger_tip)
-                    if selection is not None:
-                        if selection_start_time is None:
-                            selection_start_time = time.time()
-                        elif time.time() - selection_start_time >= selection_duration:
-                            game.play_against_computer = selection
-                    else:
-                        selection_start_time = None
-
-                    # Draw a circle at the index finger tip
-                    h, w, _ = frame.shape
-                    cx, cy = int(index_finger_tip.x * w), int(index_finger_tip.y * h)
-                    cv2.circle(frame, (cx, cy), 10, (0, 0, 255), -1)
-
-                cv2.imshow("TicTacToe", frame)
-
-                if cv2.waitKey(1) & 0xFF == ord('q'):
-                    break
+            current_selection = None
 
     cap.release()
     cv2.destroyAllWindows()
